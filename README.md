@@ -30,6 +30,21 @@ ComicCrafter generates comic stories using a locally-deployed Mistral model, str
 - `app.py` - Main Streamlit application
 - `story_generator1.py` or `story_generator2.py` - Story generation and parsing logic
 
+**Output Structure**
+INTRODUCTION:
+Panel 1: [Scene Description]
+Character Dialogues
+Narration Boxes
+STORYLINE:
+Panel 2: [Scene Description]
+...
+CLIMAX:
+Panel 3: [Scene Description]
+...
+MORAL:
+Panel 4: [Scene Description]
+...
+
 ### 2. Comic-AI (API-based)
 
 Comic-AI creates complete comic strips with both story and images using cloud-based AI services (Groq and Together).
