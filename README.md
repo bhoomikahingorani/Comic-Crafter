@@ -11,6 +11,7 @@ Both applications help users create comic book stories based on prompts, but the
 
 - **ComicCrafter** runs entirely on your local machine using the Mistral model, making it suitable for offline use and edge deployment
 - **Comic-AI** leverages cloud APIs (Groq and Together) to generate more sophisticated stories with accompanying AI-generated images
+- **Demo Video Link** https://www.loom.com/share/63cdee7d7f29482b87b78234163a71f0?sid=795a38fd-9d38-4d2c-a799-82193751ea0b
 
 ## Applications
 
