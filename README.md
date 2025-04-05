@@ -29,7 +29,7 @@ ComicCrafter generates comic stories using a locally-deployed Mistral model, str
 **Files:**
 - `app.py` - Main Streamlit application
 - `story_generator1.py` or `story_generator2.py` - Story generation and parsing logic
-
+::: tip
 Comic Script Template
 ## INTRODUCTION:
 ### Panel 1: [Scene Description]
@@ -54,7 +54,7 @@ Comic Script Template
 - **Character Name:** "Dialogue text goes here."
 - **Character Name:** "More dialogue here."
 - *Narration: Narration text goes here.*
-
+:::
 
 ### 2. Comic-AI (API-based)
 
