@@ -31,27 +31,27 @@ ComicCrafter generates comic stories using a locally-deployed Mistral model, str
 - `story_generator1.py` or `story_generator2.py` - Story generation and parsing logic
 ---
 **NOTE**
-Comic Script Template
-## INTRODUCTION:
-### Panel 1: [Scene Description]
+Output Structure of the Story
+### INTRODUCTION:
+ Panel 1: [Scene Description]
 - **Character Name:** "Dialogue text goes here."
 - **Character Name:** "More dialogue here."
 - *Narration: Narration text goes here.*
 
-## STORYLINE:
-### Panel 2: [Scene Description]
+### STORYLINE:
+ Panel 2: [Scene Description]
 - **Character Name:** "Dialogue text goes here."
 - **Character Name:** "More dialogue here."
 - *Narration: Narration text goes here.*
 
-## CLIMAX:
-### Panel 3: [Scene Description]
+### CLIMAX:
+ Panel 3: [Scene Description]
 - **Character Name:** "Dialogue text goes here."
 - **Character Name:** "More dialogue here."
 - *Narration: Narration text goes here.*
 
-## MORAL:
-### Panel 4: [Scene Description]
+### MORAL:
+ Panel 4: [Scene Description]
 - **Character Name:** "Dialogue text goes here."
 - **Character Name:** "More dialogue here."
 - *Narration: Narration text goes here.*
