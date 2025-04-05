@@ -33,7 +33,7 @@ together_client = Together(api_key=os.environ["TOGETHER_API_KEY"])
 ART_STYLES = {
     "Manga": {
         "description": "Japanese manga style with clean lines and expressive characters",
-        "prompt": "professional Japanese manga style, monochrome, clean line art, dynamic poses, expressive facial features, screentone shading, speech bubbles, high contrast, detailed backgrounds, professional inking technique"
+        "prompt": "professional Japanese manga panel style, monochrome, clean line art, dynamic poses, expressive facial features, screentone shading, speech bubbles, high contrast, detailed backgrounds, professional inking technique"
     },
     "Comic Book": {
         "description": "American comic book style with bold colors and dynamic action",
