@@ -65,15 +65,28 @@ def load_stable_diffusion_models():
 
 def call_llama3_api(user_idea):
     """
-    Call the Llama 3 API to generate panel description and dialogue.
+    Call the Llama 3 API to generate 5 comic panels with descriptions and dialogue.
     
     Args:
         user_idea (str): The user's comic idea
         
     Returns:
-        dict: JSON response containing panel_description and dialogue
+        dict: JSON response containing comic_style, panels array with panel_description and dialogue
     """
-    prompt = f"""You are a creative comic book writer. Based on the following idea, generate a single panel for a comic. Your response MUST be a single JSON object containing two keys: 'panel_description' and 'dialogue'. The description should be a vivid, detailed visual scene. The dialogue should be a single, impactful line for the character.
+    prompt = f"""You are a creative comic book writer. Based on the following idea, create a 5-panel comic story. Your response MUST be a single JSON object with the following structure:
+
+{{
+  "comic_style": "A brief description of the overall visual style and tone (max 15 words)",
+  "panels": [
+    {{
+      "panel_description": "Vivid visual scene description (max 12 words for tokenizer limit)",
+      "dialogue": "Character dialogue or narration (max 8 words)"
+    }},
+    // ... 4 more panels
+  ]
+}}
+
+IMPORTANT: Keep panel descriptions under 12 words each to stay within the 77-token limit for image generation.
 
 Idea: "{user_idea}"
 
@@ -96,7 +109,7 @@ JSON Response:"""
         llm_response = response_data.get("response", "")
         
         # Use utility function to validate JSON response
-        comic_data = utils.validate_json_response(llm_response)
+        comic_data = utils.validate_comic_json_response(llm_response)
         
         if comic_data is None:
             st.error("Invalid response format from Llama 3. Please try again.")
@@ -108,18 +121,19 @@ JSON Response:"""
         return None
 
 
-def forge_master_prompt(panel_description):
+def forge_master_prompt(panel_description, comic_style):
     """
-    Create the master prompt for Stable Diffusion by combining the LLM's description
-    with predefined artistic keywords.
+    Create the master prompt for Stable Diffusion by combining the panel description
+    with the consistent comic style and artistic keywords.
     
     Args:
         panel_description (str): The panel description from Llama 3
+        comic_style (str): The consistent comic style for all panels
         
     Returns:
         str: The master prompt for Stable Diffusion
     """
-    master_prompt = f"cinematic comic book art, {panel_description}, {config.ARTISTIC_KEYWORDS}"
+    master_prompt = f"cinematic comic book art, {comic_style}, {panel_description}, {config.ARTISTIC_KEYWORDS}"
     return master_prompt
 
 
@@ -296,33 +310,186 @@ def unload_ollama_models():
         return False
 
 
+def generate_comic_panels(comic_data, steps, cfg_scale):
+    """
+    Generate all 5 comic panels using Stable Diffusion XL.
+    
+    Args:
+        comic_data (dict): Comic data with style and panels
+        steps (int): Number of inference steps
+        cfg_scale (float): Guidance scale for generation
+        
+    Returns:
+        list: List of PIL Images for each panel
+    """
+    panels = []
+    comic_style = comic_data.get("comic_style", "")
+    panel_data = comic_data.get("panels", [])
+    
+    # Clear GPU memory before starting
+    clear_gpu_memory()
+    
+    # Load models once for all panels
+    base, refiner = load_stable_diffusion_models()
+    
+    if base is None or refiner is None:
+        st.error("Failed to load Stable Diffusion models")
+        return None
+    
+    # Generate each panel
+    for i, panel in enumerate(panel_data):
+        panel_description = panel.get("panel_description", "")
+        
+        # Create master prompt with consistent style
+        master_prompt = forge_master_prompt(panel_description, comic_style)
+        
+        # Show progress
+        with st.spinner(f"Generating panel {i+1}/5: {panel_description}"):
+            # Show GPU memory usage
+            used_mem, total_mem = get_gpu_memory_usage()
+            st.sidebar.info(f"Panel {i+1} GPU Memory: {used_mem:.0f}MB / {total_mem:.0f}MB")
+            
+            try:
+                # Generate with base model
+                latent_image = base(
+                    prompt=master_prompt,
+                    negative_prompt=config.NEGATIVE_PROMPT,
+                    num_inference_steps=steps,
+                    guidance_scale=cfg_scale,
+                    output_type="latent"
+                ).images[0]
+                
+                # Clear cache between base and refiner
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                
+                # Refine with refiner model
+                final_image = refiner(
+                    prompt=master_prompt,
+                    negative_prompt=config.NEGATIVE_PROMPT,
+                    num_inference_steps=steps,
+                    image=latent_image
+                ).images[0]
+                
+                panels.append(final_image)
+                
+                # Clear cache after each panel
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                
+            except Exception as e:
+                st.error(f"Error generating panel {i+1}: {utils.format_error_message(e)}")
+                # Continue with other panels even if one fails
+                panels.append(None)
+    
+    # Final cleanup
+    clear_gpu_memory()
+    
+    return panels
+
+
+def create_comic_layout(panels, dialogues):
+    """
+    Create a comic book layout with 5 panels arranged in a grid.
+    
+    Args:
+        panels (list): List of PIL Images
+        dialogues (list): List of dialogue strings
+        
+    Returns:
+        PIL.Image: The complete comic layout
+    """
+    if len(panels) != 5 or len(dialogues) != 5:
+        st.error("Expected 5 panels and 5 dialogues")
+        return None
+    
+    # Filter out None panels
+    valid_panels = [(panel, dialogue) for panel, dialogue in zip(panels, dialogues) if panel is not None]
+    
+    if not valid_panels:
+        st.error("No valid panels generated")
+        return None
+    
+    # If we have less than 5 panels, adjust layout
+    num_panels = len(valid_panels)
+    
+    # Define layout dimensions
+    panel_width = 512
+    panel_height = 512
+    margin = 20
+    
+    # Calculate layout based on number of panels
+    if num_panels <= 2:
+        cols, rows = num_panels, 1
+    elif num_panels <= 4:
+        cols, rows = 2, 2
+    else:
+        cols, rows = 3, 2  # 3x2 grid for 5 panels
+    
+    # Calculate canvas size
+    canvas_width = cols * panel_width + (cols + 1) * margin
+    canvas_height = rows * panel_height + (rows + 1) * margin
+    
+    # Create canvas
+    canvas = Image.new('RGB', (canvas_width, canvas_height), 'white')
+    
+    # Add panels to canvas
+    for i, (panel, dialogue) in enumerate(valid_panels):
+        # Calculate position
+        col = i % cols
+        row = i // cols
+        
+        x = margin + col * (panel_width + margin)
+        y = margin + row * (panel_height + margin)
+        
+        # Resize panel to fit
+        panel_resized = panel.resize((panel_width, panel_height), Image.Resampling.LANCZOS)
+        
+        # Add dialogue to panel
+        panel_with_dialogue = add_dialogue_to_image(panel_resized, dialogue)
+        
+        # Paste panel onto canvas
+        canvas.paste(panel_with_dialogue, (x, y))
+    
+    return canvas
+
+
 def main():
     """
     Main Streamlit application function.
     """
     # Step 1: The Spark (User Input & Settings UI)
     st.title(config.APP_TITLE)
-    st.markdown("Transform your ideas into stunning comic book panels!")
+    st.markdown("Transform your ideas into stunning **5-panel comic stories** with consistent style and narrative flow!")
     
     # Main input area
     col1, col2 = st.columns([2, 1])
     
     with col1:
         user_idea = st.text_area(
-            "Enter your comic idea:",
-            placeholder="A robot detective solves a case in a rainy, neon-lit city...",
+            "Enter your comic story idea:",
+            placeholder="A robot detective solves a case in a rainy, neon-lit city. The story should have suspense, action, and a twist ending...",
             height=150
         )
         
-        generate_button = st.button("Generate Panel", type="primary", use_container_width=True)
+        generate_button = st.button("Generate 5-Panel Comic", type="primary", use_container_width=True)
     
     with col2:
-        st.markdown("### Example Ideas:")
+        st.markdown("### Example Story Ideas:")
         st.markdown("""
-        - A superhero soaring through clouds at sunset
-        - A wizard casting a spell in an ancient library
-        - A space explorer discovering alien ruins
-        - A detective finding clues in a dark alley
+        - A superhero's origin story with a moral dilemma
+        - A wizard's quest to save their village from darkness
+        - A space explorer's discovery of ancient alien secrets
+        - A detective's investigation with an unexpected twist
+        - A time traveler's attempt to fix a historical mistake
+        """)
+        
+        st.markdown("### Features:")
+        st.markdown("""
+        - **5 Sequential Panels** with narrative flow
+        - **Consistent Visual Style** across all panels
+        - **Token-Optimized Prompts** (under 77 tokens)
+        - **Professional Layout** with speech bubbles
         """)
     
     # Sidebar: Control Panel
@@ -336,9 +503,10 @@ def main():
                                  config.MAX_GUIDANCE_SCALE, 
                                  config.DEFAULT_GUIDANCE_SCALE)
     
-    # Add generation time estimate
-    estimated_time = utils.estimate_generation_time(steps, has_refiner=True)
-    st.sidebar.info(f"Estimated generation time: {estimated_time}")
+    # Add generation time estimate for 5 panels
+    estimated_time = utils.estimate_generation_time(steps, has_refiner=True, num_panels=5)
+    st.sidebar.info(f"Estimated generation time (5 panels): {estimated_time}")
+    st.sidebar.warning("⚠️ 5-panel generation requires significant GPU memory and time")
     
     # Display system status
     st.sidebar.markdown("---")
@@ -369,41 +537,47 @@ def main():
         
         try:
             # Step 2: The Script (Llama 3 Writes)
-            status_text.text("Step 1/4: Generating story with Llama 3...")
+            status_text.text("Step 1/4: Generating 5-panel comic story with Llama 3...")
             progress_bar.progress(0.25)
             
             # Display GPU memory usage before Ollama
             used_mem, total_mem = get_gpu_memory_usage()
             st.sidebar.info(f"GPU Memory: {used_mem:.0f}MB / {total_mem:.0f}MB")
             
-            with st.spinner("Llama 3 is writing your comic script..."):
+            with st.spinner("Llama 3 is writing your 5-panel comic story..."):
                 comic_data = call_llama3_api(user_idea)
             
             if comic_data is None:
-                st.error("Failed to generate comic script. Please check if Ollama is running.")
+                st.error("Failed to generate comic story. Please check if Ollama is running.")
                 return
             
-            panel_description = comic_data.get("panel_description", "")
-            dialogue = comic_data.get("dialogue", "")
+            comic_style = comic_data.get("comic_style", "")
+            panels_data = comic_data.get("panels", [])
             
-            if not panel_description or not dialogue:
-                st.error("Invalid response from Llama 3. Please try again.")
+            if not comic_style or not panels_data or len(panels_data) != 5:
+                st.error("Invalid response from Llama 3. Expected 5 panels with comic style.")
                 return
             
-            # Display the generated script
-            st.success("Comic script generated!")
-            with st.expander("View Generated Script", expanded=True):
-                st.markdown(f"**Panel Description:** {panel_description}")
-                st.markdown(f"**Dialogue:** {dialogue}")
+            # Display the generated story
+            st.success("Comic story generated!")
+            with st.expander("View Generated Story", expanded=True):
+                st.markdown(f"**Comic Style:** {comic_style}")
+                st.markdown("**Panels:**")
+                for i, panel in enumerate(panels_data):
+                    st.markdown(f"**Panel {i+1}:** {panel.get('panel_description', '')}")
+                    st.markdown(f"**Dialogue:** {panel.get('dialogue', '')}")
+                    st.markdown("---")
             
             # Step 3: The Prompt Forge (Backend Logic)
-            status_text.text("Step 2/4: Forging master prompt...")
+            status_text.text("Step 2/4: Forging master prompts for all panels...")
             progress_bar.progress(0.50)
             
-            master_prompt = forge_master_prompt(panel_description)
-            
-            with st.expander("View Master Prompt"):
-                st.code(master_prompt)
+            # Show master prompts for each panel
+            with st.expander("View Master Prompts"):
+                for i, panel in enumerate(panels_data):
+                    master_prompt = forge_master_prompt(panel.get('panel_description', ''), comic_style)
+                    st.markdown(f"**Panel {i+1}:**")
+                    st.code(master_prompt)
             
             # CRITICAL: Unload Ollama models before loading Stable Diffusion
             status_text.text("Step 2.5/4: Clearing GPU memory for image generation...")
@@ -425,35 +599,50 @@ def main():
                 st.sidebar.success(f"GPU Memory Cleared: {used_mem:.0f}MB / {total_mem:.0f}MB")
             
             # Step 4: The Canvas (Stable Diffusion XL Creates)
-            status_text.text("Step 3/4: Generating artwork...")
+            status_text.text("Step 3/4: Generating 5 comic panels...")
             progress_bar.progress(0.75)
             
-            comic_image = generate_comic_image(master_prompt, steps, cfg_scale)
+            comic_panels = generate_comic_panels(comic_data, steps, cfg_scale)
             
-            if comic_image is None:
-                st.error("Failed to generate comic image. Please check your GPU setup.")
+            if comic_panels is None or not any(comic_panels):
+                st.error("Failed to generate comic panels. Please check your GPU setup.")
                 return
             
-            # Step 5: The Final Panel (Assembly)
-            status_text.text("Step 4/4: Adding dialogue and finalizing...")
+            # Step 5: The Final Comic (Assembly)
+            status_text.text("Step 4/4: Assembling final comic layout...")
             progress_bar.progress(1.0)
             
-            final_panel = add_dialogue_to_image(comic_image, dialogue)
+            # Extract dialogues for layout
+            dialogues = [panel.get('dialogue', '') for panel in panels_data]
+            
+            final_comic = create_comic_layout(comic_panels, dialogues)
+            
+            if final_comic is None:
+                st.error("Failed to create comic layout.")
+                return
             
             # Display the final result
-            status_text.text("✅ Comic panel generated successfully!")
-            st.success("Your comic panel is ready!")
+            status_text.text("✅ 5-panel comic generated successfully!")
+            st.success("Your comic is ready!")
             
-            # Display the final comic panel
-            st.image(final_panel, caption="Your AI-Generated Comic Panel", use_column_width=True)
+            # Display the final comic
+            st.image(final_comic, caption="Your AI-Generated 5-Panel Comic", use_column_width=True)
             
-            # Option to download the image
-            img_data = utils.create_download_link(final_panel)
+            # Display individual panels
+            st.markdown("### Individual Panels:")
+            cols = st.columns(3)
+            for i, (panel, dialogue) in enumerate(zip(comic_panels, dialogues)):
+                if panel is not None:
+                    with cols[i % 3]:
+                        st.image(panel, caption=f"Panel {i+1}: {dialogue}", use_column_width=True)
+            
+            # Option to download the comic
+            img_data = utils.create_download_link(final_comic)
             
             st.download_button(
-                label="Download Comic Panel",
+                label="Download Complete Comic",
                 data=img_data,
-                file_name="comic_panel.png",
+                file_name="5_panel_comic.png",
                 mime="image/png",
                 use_container_width=True
             )
@@ -469,6 +658,8 @@ def main():
     st.markdown("""
     <div style='text-align: center; color: #666;'>
         <p>AI Comic Factory - Powered by Llama 3 & Stable Diffusion XL</p>
+        <p>🎨 Generates 5-panel comics with consistent style and narrative flow</p>
+        <p>📝 Token-optimized prompts (under 77 tokens) for best image quality</p>
         <p>Make sure Ollama is running locally on port 11434</p>
     </div>
     """, unsafe_allow_html=True)

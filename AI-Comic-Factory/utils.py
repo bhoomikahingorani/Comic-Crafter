@@ -139,6 +139,60 @@ def validate_json_response(response_text):
     except json.JSONDecodeError:
         return None
 
+def validate_comic_json_response(response_text):
+    """
+    Validate and parse JSON response from Llama 3 for 5-panel comic.
+    
+    Args:
+        response_text (str): Raw response text
+        
+    Returns:
+        dict or None: Parsed JSON data or None if invalid
+    """
+    try:
+        data = json.loads(response_text)
+        
+        # Validate required fields
+        if not isinstance(data, dict):
+            return None
+        
+        if "comic_style" not in data or "panels" not in data:
+            return None
+        
+        # Validate comic_style
+        if not isinstance(data["comic_style"], str) or not data["comic_style"].strip():
+            return None
+        
+        # Validate panels array
+        panels = data["panels"]
+        if not isinstance(panels, list) or len(panels) != 5:
+            return None
+        
+        # Validate each panel
+        for panel in panels:
+            if not isinstance(panel, dict):
+                return None
+            
+            if "panel_description" not in panel or "dialogue" not in panel:
+                return None
+            
+            # Ensure both fields are strings and not empty
+            if not isinstance(panel["panel_description"], str) or not panel["panel_description"].strip():
+                return None
+            
+            if not isinstance(panel["dialogue"], str) or not panel["dialogue"].strip():
+                return None
+            
+            # Check token limit for panel_description (approximately 12 words = ~77 tokens)
+            description_words = len(panel["panel_description"].split())
+            if description_words > 15:  # Allow some flexibility
+                return None
+        
+        return data
+    
+    except json.JSONDecodeError:
+        return None
+
 def create_download_link(image, filename="comic_panel.png"):
     """
     Create a download link for the generated image.
@@ -210,13 +264,14 @@ def format_error_message(error):
     else:
         return f"An error occurred: {error_msg}"
 
-def estimate_generation_time(steps, has_refiner=True):
+def estimate_generation_time(steps, has_refiner=True, num_panels=5):
     """
-    Estimate generation time based on steps and settings.
+    Estimate generation time based on steps, settings, and number of panels.
     
     Args:
         steps (int): Number of inference steps
         has_refiner (bool): Whether refiner model is used
+        num_panels (int): Number of panels to generate
         
     Returns:
         str: Estimated time range
@@ -225,16 +280,20 @@ def estimate_generation_time(steps, has_refiner=True):
     base_time = steps * 0.5  # ~0.5 seconds per step for base model
     refiner_time = steps * 0.3 if has_refiner else 0  # ~0.3 seconds per step for refiner
     
-    total_time = base_time + refiner_time
+    # Time per panel
+    time_per_panel = base_time + refiner_time
     
-    if total_time < 30:
-        return "< 30 seconds"
-    elif total_time < 60:
-        return "30-60 seconds"
-    elif total_time < 120:
-        return "1-2 minutes"
+    # Total time for all panels
+    total_time = time_per_panel * num_panels
+    
+    if total_time < 60:
+        return f"~{total_time:.0f} seconds"
+    elif total_time < 300:  # 5 minutes
+        minutes = total_time / 60
+        return f"~{minutes:.1f} minutes"
     else:
-        return "2+ minutes"
+        minutes = total_time / 60
+        return f"~{minutes:.0f} minutes"
 
 def get_gpu_memory_info():
     """
