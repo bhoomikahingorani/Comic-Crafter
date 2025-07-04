@@ -11,6 +11,7 @@ from PIL import Image, ImageDraw, ImageFont
 from diffusers import DiffusionPipeline
 import io
 import os
+import gc
 import config
 import utils
 
@@ -31,6 +32,11 @@ def load_stable_diffusion_models():
     Returns: tuple of (base_model, refiner_model)
     """
     try:
+        # Clear GPU cache before loading models
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            gc.collect()
+        
         # Load base model
         base = DiffusionPipeline.from_pretrained(
             config.SDXL_BASE_MODEL,
@@ -129,6 +135,9 @@ def generate_comic_image(master_prompt, steps, cfg_scale):
     Returns:
         PIL.Image: The generated comic image
     """
+    # Clear GPU memory before loading models
+    clear_gpu_memory()
+    
     # Load models
     base, refiner = load_stable_diffusion_models()
     
@@ -142,6 +151,10 @@ def generate_comic_image(master_prompt, steps, cfg_scale):
     try:
         # Generate with base model
         with st.spinner("Generating base image..."):
+            # Show GPU memory usage
+            used_mem, total_mem = get_gpu_memory_usage()
+            st.sidebar.info(f"GPU Memory (Base): {used_mem:.0f}MB / {total_mem:.0f}MB")
+            
             latent_image = base(
                 prompt=master_prompt,
                 negative_prompt=negative_prompt,
@@ -149,19 +162,32 @@ def generate_comic_image(master_prompt, steps, cfg_scale):
                 guidance_scale=cfg_scale,
                 output_type="latent"
             ).images[0]
+            
+            # Clear cache between base and refiner
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
         
         # Refine with refiner model
         with st.spinner("Refining image..."):
+            # Show GPU memory usage
+            used_mem, total_mem = get_gpu_memory_usage()
+            st.sidebar.info(f"GPU Memory (Refiner): {used_mem:.0f}MB / {total_mem:.0f}MB")
+            
             final_image = refiner(
                 prompt=master_prompt,
                 negative_prompt=negative_prompt,
                 num_inference_steps=steps,
                 image=latent_image
             ).images[0]
+            
+            # Clear cache after generation
+            clear_gpu_memory()
         
         return final_image
     
     except Exception as e:
+        # Clean up GPU memory on error
+        clear_gpu_memory()
         st.error(f"Error generating image: {utils.format_error_message(e)}")
         return None
 
@@ -220,6 +246,54 @@ def add_dialogue_to_image(image, dialogue):
     draw.text((text_x, text_y), dialogue, fill="black", font=font)
     
     return img_with_text
+
+
+def clear_gpu_memory():
+    """
+    Clear GPU memory by forcing garbage collection and emptying CUDA cache.
+    """
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
+        gc.collect()
+
+def get_gpu_memory_usage():
+    """
+    Get current GPU memory usage in MB.
+    Returns: tuple of (used_memory_mb, total_memory_mb)
+    """
+    if torch.cuda.is_available():
+        used = torch.cuda.memory_allocated() / 1024 / 1024
+        total = torch.cuda.get_device_properties(0).total_memory / 1024 / 1024
+        return used, total
+    return 0, 0
+
+def unload_ollama_models():
+    """
+    Attempt to unload Ollama models from GPU memory.
+    This sends a request to Ollama to unload all models.
+    """
+    try:
+        # Send request to unload all models
+        response = requests.post(
+            f"{config.OLLAMA_BASE_URL}/api/generate",
+            json={
+                "model": config.OLLAMA_MODEL,
+                "prompt": "unload",
+                "keep_alive": 0  # This tells Ollama to unload the model immediately
+            },
+            timeout=10
+        )
+        
+        # Clear GPU cache after attempting to unload
+        clear_gpu_memory()
+        
+        return True
+    except Exception as e:
+        st.warning(f"Could not unload Ollama models: {str(e)}")
+        # Still try to clear GPU cache
+        clear_gpu_memory()
+        return False
 
 
 def main():
@@ -298,6 +372,10 @@ def main():
             status_text.text("Step 1/4: Generating story with Llama 3...")
             progress_bar.progress(0.25)
             
+            # Display GPU memory usage before Ollama
+            used_mem, total_mem = get_gpu_memory_usage()
+            st.sidebar.info(f"GPU Memory: {used_mem:.0f}MB / {total_mem:.0f}MB")
+            
             with st.spinner("Llama 3 is writing your comic script..."):
                 comic_data = call_llama3_api(user_idea)
             
@@ -326,6 +404,25 @@ def main():
             
             with st.expander("View Master Prompt"):
                 st.code(master_prompt)
+            
+            # CRITICAL: Unload Ollama models before loading Stable Diffusion
+            status_text.text("Step 2.5/4: Clearing GPU memory for image generation...")
+            with st.spinner("Preparing GPU for image generation..."):
+                # First, unload Ollama models
+                unload_ollama_models()
+                
+                # Check if we have enough free GPU memory
+                memory_info = utils.get_gpu_memory_info()
+                if memory_info["available"]:
+                    required_memory = config.MIN_FREE_VRAM_MB
+                    if memory_info["free_mb"] < required_memory:
+                        st.error(f"Insufficient GPU memory. Need {required_memory}MB free, but only {memory_info['free_mb']:.0f}MB available.")
+                        st.error("Try closing other GPU applications or reducing inference steps.")
+                        return
+                
+                # Display GPU memory after clearing
+                used_mem, total_mem = get_gpu_memory_usage()
+                st.sidebar.success(f"GPU Memory Cleared: {used_mem:.0f}MB / {total_mem:.0f}MB")
             
             # Step 4: The Canvas (Stable Diffusion XL Creates)
             status_text.text("Step 3/4: Generating artwork...")
@@ -364,6 +461,8 @@ def main():
         except Exception as e:
             st.error(f"An error occurred: {str(e)}")
             st.error("Please check your system setup and try again.")
+            # Clean up GPU memory on error
+            clear_gpu_memory()
     
     # Footer
     st.markdown("---")

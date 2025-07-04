@@ -64,6 +64,15 @@ def display_system_status():
         if status["vram_gb"] > 0:
             vram_status = "✅" if status["vram_gb"] >= config.MIN_VRAM_GB else "⚠️"
             st.sidebar.info(f"{vram_status} VRAM: {status['vram_gb']:.1f} GB")
+            
+            # Show current GPU memory usage
+            memory_info = get_gpu_memory_info()
+            if memory_info["available"]:
+                st.sidebar.info(f"💾 GPU Memory: {memory_info['used_mb']:.0f}MB / {memory_info['total_mb']:.0f}MB ({memory_info['usage_percent']:.1f}%)")
+                
+                # Warning if memory usage is high
+                if memory_info["usage_percent"] > 80:
+                    st.sidebar.warning("⚠️ High GPU memory usage detected")
     else:
         st.sidebar.error("❌ CUDA Not Available")
     
@@ -226,3 +235,49 @@ def estimate_generation_time(steps, has_refiner=True):
         return "1-2 minutes"
     else:
         return "2+ minutes"
+
+def get_gpu_memory_info():
+    """
+    Get detailed GPU memory information.
+    
+    Returns:
+        dict: GPU memory information
+    """
+    if not torch.cuda.is_available():
+        return {
+            "available": False,
+            "used_mb": 0,
+            "total_mb": 0,
+            "free_mb": 0,
+            "usage_percent": 0
+        }
+    
+    used = torch.cuda.memory_allocated() / 1024 / 1024
+    total = torch.cuda.get_device_properties(0).total_memory / 1024 / 1024
+    free = total - used
+    usage_percent = (used / total) * 100
+    
+    return {
+        "available": True,
+        "used_mb": used,
+        "total_mb": total,
+        "free_mb": free,
+        "usage_percent": usage_percent
+    }
+
+def check_gpu_memory_available(required_mb=8000):
+    """
+    Check if enough GPU memory is available.
+    
+    Args:
+        required_mb (int): Required memory in MB
+        
+    Returns:
+        bool: True if enough memory is available
+    """
+    memory_info = get_gpu_memory_info()
+    
+    if not memory_info["available"]:
+        return False
+    
+    return memory_info["free_mb"] >= required_mb

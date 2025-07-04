@@ -44,3 +44,8 @@ NEGATIVE_PROMPT = "ugly, tiling, poorly drawn, out of frame, disfigured, body ou
 MIN_VRAM_GB = 8
 RECOMMENDED_VRAM_GB = 12
 MIN_DISK_SPACE_GB = 20
+
+# GPU Memory Management
+MIN_FREE_VRAM_MB = 4000  # Minimum free VRAM needed for Stable Diffusion
+OLLAMA_KEEP_ALIVE_UNLOAD = 0  # Time to keep Ollama models loaded (0 = unload immediately)
+ENABLE_GPU_MEMORY_MONITORING = True
