@@ -69,4 +69,4 @@ echo "🛑 Press Ctrl+C to stop the application"
 echo ""
 
 # Launch the Streamlit app
-streamlit run app.py --server.port 8501 --server.address localhost
+streamlit run app.py --server.port 8501 --server.address 0.0.0.0
